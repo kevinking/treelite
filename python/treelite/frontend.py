@@ -164,13 +164,15 @@ class Model(object):
     _check_ext(toolchain, libname)
     _toolchain_exist_check(toolchain)
 
+    export_udf = ('export_udf' in params and params['export_udf'] > 0)
+
     with TemporaryDirectory() as temp_dir:
       target = os.path.splitext(libname)[0]
       # create a child directory to get desired name for target
       dirpath = os.path.join(temp_dir, target)
       os.makedirs(dirpath)
       self.compile(dirpath, params, compiler, verbose)
-      generate_makefile(dirpath, platform, toolchain, options)
+      generate_makefile(dirpath, platform, toolchain, export_udf, options)
       shutil.make_archive(base_name=os.path.splitext(pkgpath)[0],
                           format='zip',
                           root_dir=temp_dir,

@@ -33,10 +33,12 @@ def _obj_cmd(source, toolchain, options):
   return '{} -c -O3 -o {} {} -fPIC -std=c99 {}'\
          .format(toolchain, source + obj_ext, source + '.c', ' '.join(options))
 
-def _lib_cmd(sources, target, lib_ext, toolchain, options):
+def _lib_cmd(sources, target, lib_ext, toolchain, options, export_udf=False):
   obj_ext = _obj_ext()
-  return '{} -shared -O3 -o {} {} -std=c99 {}'\
+  return '{} {} -O3 -o {} {} -std=c99 {}'\
           .format(toolchain,
+                  '-shared' if not export_udf \
+                            else '-bundle -flat_namespace -undefined suppress',
                   target + lib_ext,
                   ' '.join([x['name'] + obj_ext for x in sources]),
                   ' '.join(options))

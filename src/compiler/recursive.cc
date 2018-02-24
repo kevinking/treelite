@@ -226,7 +226,52 @@ class RecursiveCompiler : public Compiler, private QuantizePolicy {
     main_file.PushBack(std::move(pred_transform_func));
     main_file.PushBack(std::move(pred_transform_batch_func));
     main_file.PushBack(std::move(main_func));
-    auto file_preamble = QuantizePolicy::ConstantsPreamble();
+    std::vector<std::string> file_preamble;
+    if (param.export_udf > 0) {
+      CHECK(model.num_output_group == 1)
+        << "Exporting as UDF is not supported for multi-class classification";
+      file_preamble.emplace_back("#include \"postgres.h\"");
+      file_preamble.emplace_back("#include \"fmgr.h\"");
+      file_preamble.emplace_back("#include \"executor/executor.h\"");
+      file_preamble.emplace_back();
+      file_preamble.emplace_back("#ifdef PG_MODULE_MAGIC");
+      file_preamble.emplace_back("PG_MODULE_MAGIC;");
+      file_preamble.emplace_back("#endif");
+      file_preamble.emplace_back();
+      file_preamble.emplace_back("PG_FUNCTION_INFO_V1(predict);");
+      file_preamble.emplace_back();
+      file_preamble.emplace_back("Datum predict(PG_FUNCTION_ARGS) {");
+      file_preamble.emplace_back("  HeapTupleHeader t = "
+                                 "PG_GETARG_HEAPTUPLEHEADER(0);");
+      file_preamble.emplace_back("  bool pred_margin = PG_GETARG_BOOL(1);");
+      file_preamble.emplace_back("  Datum d;");
+      file_preamble.emplace_back("  bool isnull;");
+      file_preamble.emplace_back(std::string("  union Entry inst[")
+                                 + std::to_string(model.num_feature) + "];");
+      file_preamble.emplace_back();
+      for (int fid = 0; fid < model.num_feature; ++fid) {
+        const std::string inst_var = std::string("    inst[")
+                                     + std::to_string(fid) + "]";
+        file_preamble.emplace_back(std::string("  d = GetAttributeByName(t, "
+                                               "\"feature_")
+                                   + std::to_string(fid) + "\", &isnull);");
+        file_preamble.emplace_back("  if (isnull) {");
+        file_preamble.emplace_back(inst_var + ".missing = -1;");
+        file_preamble.emplace_back("  } else {");
+        file_preamble.emplace_back(inst_var
+                                   + ".fvalue = (float)DatumGetFloat4(d);");
+        file_preamble.emplace_back("  }");
+      }
+      file_preamble.emplace_back("  float res = predict_margin(inst);");
+      file_preamble.emplace_back("  if (!pred_margin) {");
+      file_preamble.emplace_back("    pred_transform(&res);");
+      file_preamble.emplace_back("  }");
+      file_preamble.emplace_back("  PG_RETURN_FLOAT4((float4)res);");
+      file_preamble.emplace_back("}");
+    }
+    common::TransformPushBack(&file_preamble,
+                              QuantizePolicy::ConstantsPreamble(),
+                              [] (std::string line) { return line; });
     semantic_model.units.emplace_back(PlainBlock(file_preamble),
                                       std::move(main_file));
 
@@ -238,7 +283,9 @@ class RecursiveCompiler : public Compiler, private QuantizePolicy {
         const size_t tree_end = std::min((unit_id + 1) * unit_size,
                                          model.trees.size());
         SequenceBlock unit_seq;
-        unit_seq.Reserve(tree_end - tree_begin + 2);
+        if (tree_begin < tree_end) {
+          unit_seq.Reserve(tree_end - tree_begin + 2);
+        }
         unit_seq.PushBack(PlainBlock(group_policy.Accumulator()));
         for (size_t tree_id = tree_begin; tree_id < tree_end; ++tree_id) {
           const Tree& tree = model.trees[tree_id];
@@ -257,7 +304,12 @@ class RecursiveCompiler : public Compiler, private QuantizePolicy {
         semantic_model.units.emplace_back(PlainBlock(), std::move(unit_func));
       }
     }
-    auto header = QuantizePolicy::CommonHeader();
+    std::vector<std::string> header{"#include <stdlib.h>",
+                                    "#include <string.h>",
+                                    "#include <math.h>",
+                                    "#include <stdint.h>"};
+    common::TransformPushBack(&header, QuantizePolicy::CommonHeader(),
+                              [] (std::string line) { return line; });
     if (annotate) {
       header.emplace_back();
 #if defined(__clang__) || defined(__GNUC__)
@@ -360,11 +412,7 @@ class NoQuantize : private MetadataStore {
     };
   }
   std::vector<std::string> CommonHeader() const {
-    return {"#include <stdlib.h>",
-            "#include <string.h>",
-            "#include <math.h>",
-            "#include <stdint.h>",
-            "",
+    return {"",
             "union Entry {",
             "  int missing;",
             "  float fvalue;",
@@ -414,11 +462,7 @@ class Quantize : private MetadataStore {
     };
   }
   std::vector<std::string> CommonHeader() const {
-    return {"#include <stdlib.h>",
-            "#include <string.h>",
-            "#include <math.h>",
-            "#include <stdint.h>",
-            "",
+    return {"",
             "union Entry {",
             "  int missing;",
             "  float fvalue;",

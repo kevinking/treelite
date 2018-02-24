@@ -64,7 +64,9 @@ def _obj_cmd(source, toolchain, options):
           .format(source + '.c', ' '.join(options))
 
 # pylint: disable=W0613
-def _lib_cmd(sources, target, lib_ext, toolchain, options):
+def _lib_cmd(sources, target, lib_ext, toolchain, options, export_udf=False):
+  if export_udf:
+    raise ValueError('export_udf option not supported for MSVC')
   obj_ext = _obj_ext()
   return 'cl.exe /LD /Fe{} /openmp {} {}'\
           .format(target,

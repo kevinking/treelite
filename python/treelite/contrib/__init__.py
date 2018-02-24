@@ -19,7 +19,8 @@ def _check_ext(toolchain, dllpath):
     from .gcc import _check_ext
   _check_ext(dllpath)
 
-def generate_makefile(dirpath, platform, toolchain, options=None):
+def generate_makefile(dirpath, platform, toolchain, export_udf=False,
+                      options=None):
   """
   Generate a Makefile for a given directory of headers and sources. The
   resulting Makefile will be stored in the directory. This function is useful
@@ -38,6 +39,9 @@ def generate_makefile(dirpath, platform, toolchain, options=None):
   toolchain : :py:class:`str <python:str>`
       which toolchain to use. You may choose one of 'msvc', 'clang', and 'gcc'.
       You may also specify a specific variation of clang or gcc (e.g. 'gcc-7')
+  export_udf : :py:class:`bool <python:bool>`, optional
+      if True, include extra header files so that the resulting library can
+      be imported into PostgreSQL
   options : :py:class:`list <python:list>` of :py:class:`str <python:str>`, \
             optional
       Additional options to pass to toolchain
@@ -65,7 +69,7 @@ def generate_makefile(dirpath, platform, toolchain, options=None):
   if platform == 'windows':
     lib_ext = '.dll'
   elif platform == 'osx':
-    lib_ext = '.dylib'
+    lib_ext = '.dylib' if not export_udf else '.so'
   elif platform == 'unix':
     lib_ext = '.so'
   else:
@@ -84,6 +88,10 @@ def generate_makefile(dirpath, platform, toolchain, options=None):
   obj_ext = _obj_ext()
 
   with open(os.path.join(dirpath, 'Makefile'), 'w') as f:
+    if export_udf:
+      f.write('PG_CONFIG = pg_config\n' +
+              'INCLUDEDIR = $(shell $(PG_CONFIG) --includedir-server)\n\n')
+      options.append('-I$(INCLUDEDIR)')
     f.write('{}: {}\n'.format(recipe['target'] + lib_ext,
                               ' '.join([x['name'] + obj_ext \
                                         for x in recipe['sources']])))
@@ -91,7 +99,8 @@ def generate_makefile(dirpath, platform, toolchain, options=None):
                                      target=recipe['target'],
                                      lib_ext=lib_ext,
                                      toolchain=toolchain,
-                                     options=options)))
+                                     options=options,
+                                     export_udf=export_udf)))
     for source in recipe['sources']:
       f.write('{}: {}\n'.format(source['name'] + obj_ext,
                                 source['name'] + '.c'))
